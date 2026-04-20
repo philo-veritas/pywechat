@@ -555,6 +555,481 @@ class Tools():
             if next_item is not None and next_item.class_name()!="mmui::ContactsCellGroupView":
                 contact_item.click_input()
 
+    @staticmethod
+    def _resolve_control(control):
+        '''将WindowSpecification解析为实际wrapper对象'''
+        if control is None:
+            return None
+        if isinstance(control,WindowSpecification):
+            try:
+                return control.wrapper_object()
+            except Exception:
+                return control
+        return control
+
+    @staticmethod
+    def _safe_children(control):
+        control=Tools._resolve_control(control)
+        if control is None:
+            return []
+        try:
+            return control.children()
+        except Exception:
+            return []
+
+    @staticmethod
+    def _safe_window_text(control)->str:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return ''
+        try:
+            return control.window_text()
+        except Exception:
+            return ''
+
+    @staticmethod
+    def _safe_class_name(control)->str|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            return control.class_name()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_automation_id(control)->str|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            return control.automation_id()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_framework_id(control)->str|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            return getattr(control.element_info,'framework_id',None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_control_type(control)->str|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            control_type=getattr(control.element_info,'control_type',None)
+            if control_type is None:
+                return None
+            return str(control_type)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_is_visible(control)->bool|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            return control.is_visible()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_is_enabled(control)->bool|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            return control.is_enabled()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_runtime_id(control)->list[int]|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            runtime_id=getattr(control.element_info,'runtime_id',None)
+            if runtime_id is None:
+                return None
+            if isinstance(runtime_id,(list,tuple)):
+                return [int(value) for value in runtime_id]
+            return [int(runtime_id)]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_handle(control)->int|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            handle=getattr(control,'handle',None)
+            if handle is None:
+                return None
+            return int(handle)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _safe_rectangle_dict(control)->dict|None:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return None
+        try:
+            rect=control.rectangle()
+            mid_point=rect.mid_point()
+            return {
+                'left':rect.left,
+                'top':rect.top,
+                'right':rect.right,
+                'bottom':rect.bottom,
+                'width':rect.width(),
+                'height':rect.height(),
+                'mid_x':mid_point.x,
+                'mid_y':mid_point.y,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_relative_rect(rect:dict,base_rect:dict)->tuple[dict|None,dict|None]:
+        if rect is None or base_rect is None:
+            return None,None
+        base_width=base_rect['width']
+        base_height=base_rect['height']
+        if base_width<=0 or base_height<=0:
+            return None,None
+        relative_rect={
+            'left':rect['left']-base_rect['left'],
+            'top':rect['top']-base_rect['top'],
+            'right':rect['right']-base_rect['left'],
+            'bottom':rect['bottom']-base_rect['top'],
+            'width':rect['width'],
+            'height':rect['height'],
+            'mid_x':rect['mid_x']-base_rect['left'],
+            'mid_y':rect['mid_y']-base_rect['top'],
+        }
+        relative_pct={
+            'left':round(relative_rect['left']/base_width,4),
+            'top':round(relative_rect['top']/base_height,4),
+            'right':round(relative_rect['right']/base_width,4),
+            'bottom':round(relative_rect['bottom']/base_height,4),
+            'width':round(relative_rect['width']/base_width,4),
+            'height':round(relative_rect['height']/base_height,4),
+            'left_gap':round((rect['left']-base_rect['left'])/base_width,4),
+            'right_gap':round((base_rect['right']-rect['right'])/base_width,4),
+        }
+        return relative_rect,relative_pct
+
+    @staticmethod
+    def _node_key(node:dict):
+        runtime_id=node.get('runtime_id')
+        if runtime_id:
+            return ('runtime_id',tuple(runtime_id))
+        rect=node.get('rect')
+        rect_key=None
+        if rect is not None:
+            rect_key=(rect['left'],rect['top'],rect['right'],rect['bottom'])
+        return (
+            'fallback',
+            node.get('control_type'),
+            node.get('class_name'),
+            rect_key,
+            node.get('title'),
+        )
+
+    @staticmethod
+    def _build_control_node(control,depth:int,parent_index:int|None,base_rect:dict|None,with_runtime_id:bool,with_text_length:bool)->dict:
+        control=Tools._resolve_control(control)
+        title=Tools._safe_window_text(control)
+        rect=Tools._safe_rectangle_dict(control)
+        node={
+            'index':None,
+            'parent_index':parent_index,
+            'depth':depth,
+            'control_type':Tools._safe_control_type(control),
+            'class_name':Tools._safe_class_name(control),
+            'automation_id':Tools._safe_automation_id(control),
+            'framework_id':Tools._safe_framework_id(control),
+            'title':title,
+            'visible':Tools._safe_is_visible(control),
+            'enabled':Tools._safe_is_enabled(control),
+            'handle':Tools._safe_handle(control),
+            'rect':rect,
+        }
+        if with_runtime_id:
+            node['runtime_id']=Tools._safe_runtime_id(control)
+        if with_text_length:
+            node['text_length']=len(title)
+        relative_rect,relative_pct=Tools._build_relative_rect(rect,base_rect)
+        if relative_rect is not None:
+            node['relative_rect']=relative_rect
+        if relative_pct is not None:
+            node['relative_pct']=relative_pct
+        return node
+
+    @staticmethod
+    def _collect_control_geometry_nodes(
+        control,
+        mode:Literal['children','descendants']='children',
+        include_self:bool=False,
+        max_depth:int|None=1,
+        control_types:list[str]|None=None,
+        visible_only:bool=False,
+        enabled_only:bool=False,
+        relative_to=None,
+        max_nodes:int=200,
+        with_runtime_id:bool=True,
+        with_text_length:bool=True,
+    )->tuple[list[dict],bool]:
+        control=Tools._resolve_control(control)
+        if control is None:
+            return [],False
+        if mode not in {'children','descendants'}:
+            raise ValueError(f"mode必须是'children'或'descendants',但传入了{mode}")
+        if max_nodes<=0:
+            raise ValueError(f'max_nodes必须大于0,但传入了{max_nodes}')
+        if max_depth is not None and max_depth<0:
+            raise ValueError(f'max_depth不能小于0,但传入了{max_depth}')
+        if mode=='children':
+            max_depth=1
+
+        base_rect=Tools._safe_rectangle_dict(relative_to) if relative_to is not None else None
+        allowed_types=set(control_types) if control_types else None
+        nodes=[]
+        seen=set()
+        truncated=False
+        visited_nodes=0
+
+        def should_include(node:dict)->bool:
+            if allowed_types and node.get('control_type') not in allowed_types:
+                return False
+            if visible_only and node.get('visible') is not True:
+                return False
+            if enabled_only and node.get('enabled') is not True:
+                return False
+            return True
+
+        def visit(current,depth:int,parent_index:int|None):
+            nonlocal truncated,visited_nodes
+            if truncated:
+                return
+            visited_nodes+=1
+            if visited_nodes>max_nodes:
+                truncated=True
+                return
+            node=Tools._build_control_node(
+                control=current,
+                depth=depth,
+                parent_index=parent_index,
+                base_rect=base_rect,
+                with_runtime_id=with_runtime_id,
+                with_text_length=with_text_length,
+            )
+            key=Tools._node_key(node)
+            if key in seen:
+                return
+            seen.add(key)
+            current_parent_index=parent_index
+            if should_include(node):
+                node['index']=len(nodes)
+                nodes.append(node)
+                current_parent_index=node['index']
+
+            if mode!='descendants':
+                return
+            if max_depth is not None and depth>=max_depth:
+                return
+            for child in Tools._safe_children(current):
+                if truncated:
+                    break
+                visit(child,depth+1,current_parent_index)
+
+        if include_self:
+            visit(control,0,None)
+        start_parent_index=nodes[0]['index'] if include_self and nodes else None
+        for child in Tools._safe_children(control):
+            if truncated:
+                break
+            visit(child,1,start_parent_index)
+        return nodes,truncated
+
+    @staticmethod
+    def collect_control_geometry(
+        control,
+        mode:Literal['children','descendants']='children',
+        include_self:bool=False,
+        max_depth:int|None=1,
+        control_types:list[str]|None=None,
+        visible_only:bool=False,
+        enabled_only:bool=False,
+        relative_to=None,
+        max_nodes:int=200,
+        with_runtime_id:bool=True,
+        with_text_length:bool=True,
+    )->list[dict]:
+        '''
+        返回某个控件及其子控件/后代控件的结构化几何信息
+        Args:
+            control:已解析的pywinauto控件对象或WindowSpecification
+            mode:'children'仅返回直接子控件,'descendants'递归返回后代控件
+            include_self:是否包含当前控件本身
+            max_depth:递归深度限制,mode='children'时固定为1
+            control_types:仅保留指定control_type的控件
+            visible_only:仅保留可见控件
+            enabled_only:仅保留启用控件
+            relative_to:用于计算相对坐标的参考控件
+            max_nodes:最多遍历的节点数量
+        Returns:
+            nodes:结构化节点信息列表
+        '''
+        nodes,_=Tools._collect_control_geometry_nodes(
+            control=control,
+            mode=mode,
+            include_self=include_self,
+            max_depth=max_depth,
+            control_types=control_types,
+            visible_only=visible_only,
+            enabled_only=enabled_only,
+            relative_to=relative_to,
+            max_nodes=max_nodes,
+            with_runtime_id=with_runtime_id,
+            with_text_length=with_text_length,
+        )
+        return nodes
+
+    @staticmethod
+    def inspect_message_item_geometry(
+        listitem,
+        chat_list=None,
+        recursive:bool=True,
+        max_depth:int|None=4,
+        visible_only:bool=False,
+        max_nodes:int=100,
+    )->dict:
+        '''
+        返回聊天消息ListItem自身及其子控件的几何信息,用于调试聊天区UI树
+        Args:
+            listitem:聊天区内的消息ListItem
+            chat_list:消息所在的聊天列表,传入后会计算相对坐标
+            recursive:是否递归收集后代控件
+            max_depth:递归深度限制
+            visible_only:是否仅保留可见节点
+            max_nodes:最大遍历节点数
+        Returns:
+            info:{'self','children','descendants','summary'}
+        '''
+        base_rect=Tools._safe_rectangle_dict(chat_list) if chat_list is not None else None
+        self_node=Tools._build_control_node(
+            control=listitem,
+            depth=0,
+            parent_index=None,
+            base_rect=base_rect,
+            with_runtime_id=True,
+            with_text_length=True,
+        )
+        children,children_truncated=Tools._collect_control_geometry_nodes(
+            control=listitem,
+            mode='children',
+            include_self=False,
+            max_depth=1,
+            visible_only=visible_only,
+            relative_to=chat_list,
+            max_nodes=max_nodes,
+            with_runtime_id=True,
+            with_text_length=True,
+        )
+        descendants=[]
+        descendants_truncated=False
+        if recursive:
+            descendants,descendants_truncated=Tools._collect_control_geometry_nodes(
+                control=listitem,
+                mode='descendants',
+                include_self=False,
+                max_depth=max_depth,
+                visible_only=visible_only,
+                relative_to=chat_list,
+                max_nodes=max_nodes,
+                with_runtime_id=True,
+                with_text_length=True,
+            )
+        summary_nodes=descendants if recursive else children
+        rect_nodes=[node for node in [self_node,*summary_nodes] if node.get('rect') is not None]
+        summary={
+            'children_count':len(children),
+            'descendants_count':len(descendants),
+            'visible_descendants_count':len([node for node in summary_nodes if node.get('visible') is True]),
+            'min_left':min(node['rect']['left'] for node in rect_nodes) if rect_nodes else None,
+            'max_right':max(node['rect']['right'] for node in rect_nodes) if rect_nodes else None,
+            'has_button':any(node.get('control_type')=='Button' for node in summary_nodes),
+            'has_text':any(node.get('control_type')=='Text' for node in summary_nodes),
+            'has_visible_button':any(node.get('control_type')=='Button' and node.get('visible') is True for node in summary_nodes),
+            'has_visible_text':any(node.get('control_type')=='Text' and node.get('visible') is True for node in summary_nodes),
+            'truncated':children_truncated or descendants_truncated,
+        }
+        return {
+            'self':self_node,
+            'children':children,
+            'descendants':descendants,
+            'summary':summary,
+        }
+
+    @staticmethod
+    def dump_control_geometry(
+        control,
+        mode:Literal['children','descendants']='children',
+        include_self:bool=False,
+        max_depth:int|None=1,
+        relative_to=None,
+        max_nodes:int=200,
+    )->list[str]:
+        '''
+        返回适合直接打印的控件几何调试文本
+        '''
+        nodes,truncated=Tools._collect_control_geometry_nodes(
+            control=control,
+            mode=mode,
+            include_self=include_self,
+            max_depth=max_depth,
+            relative_to=relative_to,
+            max_nodes=max_nodes,
+            with_runtime_id=True,
+            with_text_length=True,
+        )
+        lines=[]
+        for node in nodes:
+            title=(node.get('title') or '').replace('\n',r'\n')
+            rect=node.get('rect')
+            rect_text='rect=None'
+            if rect is not None:
+                rect_text=f"rect=({rect['left']},{rect['top']},{rect['right']},{rect['bottom']})"
+            pct=node.get('relative_pct')
+            pct_text=''
+            if pct is not None:
+                pct_text=(
+                    f" pct=(left={pct['left']},right={pct['right']},"
+                    f"left_gap={pct['left_gap']},right_gap={pct['right_gap']})"
+                )
+            line=(
+                f"[{node['index']}] depth={node['depth']} parent={node['parent_index']} "
+                f"type={node.get('control_type')} class={node.get('class_name')} "
+                f"auto_id={node.get('automation_id')} framework={node.get('framework_id')} "
+                f"title={title!r} visible={node.get('visible')} enabled={node.get('enabled')} "
+                f"{rect_text}{pct_text}"
+            )
+            lines.append(line)
+        if truncated:
+            lines.append(f'[truncated] max_nodes={max_nodes}')
+        return lines
+
     def match_duration(duration:str)->float:
         '''
         该函数用来将字符串类型的时间段转换为秒
