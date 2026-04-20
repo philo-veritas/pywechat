@@ -462,28 +462,86 @@ class Tools():
         return None
 
     @staticmethod
+    def get_search_result_info(friend:str,search_result:ListViewWrapper)->tuple[ListItemWrapper|None,str|None]:
+        '''查看顶部搜索列表里有没有名为friend的本地搜索结果,并返回对应分区
+        Args:
+            friend:搜索的内容,好友或群聊的备注,公众号服务号名称等
+            search_result:微信主界面搜索内容后的结果列表,即Uielements内的Lists.SearchResult
+        Returns:
+            (listitem,section):匹配到的搜索结果与其所属分区,未匹配到时返回(None,None)
+        '''
+        content_sections={'最近使用','联系人','群聊','服务号','公众号','最常使用'}
+        xtable_sections={'功能','最近使用','最常使用'}
+        section_labels=content_sections|xtable_sections|{'搜索网络结果'}
+        listitems=search_result.children(control_type='ListItem')
+        current_section=None
+        content_fallback=None
+        xtable_fallback=None
+        for listitem in listitems:
+            text=listitem.window_text()
+            class_name=listitem.class_name()
+            if text in section_labels:
+                current_section=text
+                continue
+            if class_name=="mmui::SearchContentCellView" and text==friend:
+                if current_section in content_sections:
+                    return listitem,current_section
+                if content_fallback is None:
+                    content_fallback=listitem
+            if class_name=="mmui::XTableCell" and text==friend:
+                if current_section in xtable_sections:
+                    return listitem,current_section
+                if xtable_fallback is None:
+                    xtable_fallback=listitem
+        if content_fallback is not None:
+            return content_fallback,None
+        if xtable_fallback is not None:
+            return xtable_fallback,None
+        return None,None
+
+    @staticmethod
     def get_search_result(friend:str,search_result:ListViewWrapper)->(ListItemWrapper|None):
         '''查看顶部搜索列表里有没有名为friend的listitem,只能用来查找联系人,群聊,服务号,公众号
         Args:
             friend:搜索的内容,好友或群聊的备注,公众号服务号名称等
             search_result:微信主界面搜索内容后的结果列表,即Uielements内的Lists.SearchResult
         '''
-        searh_content_label={'最近使用','联系人','群聊','服务号','公众号','最常使用'}
-        xtable_label={'功能','最近使用','最常使用'}
-        texts=[listitem.window_text() for listitem in search_result.children(control_type="ListItem")]
-        listitems=search_result.children(control_type='ListItem')
-        #正常好友群聊服务号公众号的class_name是mmui::SearchContentCellView
-        if searh_content_label.intersection(texts):#交集
-            listitems=[listitem for listitem in listitems if listitem.class_name()=="mmui::SearchContentCellView"]
-            listitems=[listitem for listitem in listitems if listitem.window_text()==friend]
-            if listitems:
-                return listitems[0]
-        if xtable_label.intersection(texts):#功能比如文件传输助手,微信支付的class_name是mmui::XTableCell
-            listitems=search_result.children(control_type='ListItem',class_name="mmui::XTableCell")
-            listitems=[listitem for listitem in listitems if listitem.window_text()==friend]
-            if listitems:
-                return listitems[0]
-        return None
+        search_result_item,_=Tools.get_search_result_info(friend=friend,search_result=search_result)
+        return search_result_item
+
+    @staticmethod
+    def wait_for_search_results_stable(search_result:ListViewWrapper|WindowSpecification,timeout:float=3.0,
+        poll_interval:float=0.2,stable_rounds:int=3,min_wait:float=0.6)->None:
+        '''
+        等待顶部搜索结果列表稳定，避免搜索结果异步重绘时误点
+        Args:
+            search_result:微信主界面顶部搜索结果列表
+            timeout:最大等待时长
+            poll_interval:轮询间隔
+            stable_rounds:连续稳定轮数
+            min_wait:最少等待时长
+        '''
+        end_time=time.time()+timeout
+        min_wait_end=time.time()+min_wait
+        previous_signature=None
+        stable_count=0
+        while time.time()<end_time:
+            try:
+                listitems=search_result.children(control_type='ListItem')
+                signature=tuple(
+                    (listitem.class_name(),listitem.window_text(),listitem.automation_id())
+                    for listitem in listitems
+                )
+            except Exception:
+                signature=()
+            if signature==previous_signature:
+                stable_count+=1
+            else:
+                previous_signature=signature
+                stable_count=1
+            if time.time()>=min_wait_end and stable_count>=stable_rounds:
+                return
+            time.sleep(poll_interval)
     
     @staticmethod
     def capture_alias(listitem:ListItemWrapper):
@@ -1037,6 +1095,7 @@ class Navigator():
             search.set_text(friend)
             try:
                 search_results=main_window.child_window(**Lists.SearchResult).wait(wait_for='ready',timeout=3)#搜索结果列表
+                Tools.wait_for_search_results_stable(search_results)
                 search_result=Tools.get_search_result(friend=friend,search_result=search_results)
                 search_mobile=search_results.children(**ListItems.MobileSearchListItem)#绿色的网络查找手机/QQ号选项
             except Exception:
@@ -1117,31 +1176,6 @@ class Navigator():
         Returns:
             dialog_window:与好友的聊天窗口
         '''
-
-        def get_search_result(friend:str,search_result:ListViewWrapper)->(ListItemWrapper|None):
-            '''查看顶部搜索列表里有没有名为friend的listitem,只能用来查找联系人,群聊,服务号,公众号'''
-            is_contact=True
-            texts=[listitem.window_text() for listitem in search_result.children(control_type="ListItem")]
-            listitems=search_result.children(control_type='ListItem')
-            contact_label={'最近使用','联系人','群聊','最常使用'}
-            if contact_label.intersection(texts):
-                listitems=[listitem for listitem in listitems if listitem.class_name()=="mmui::SearchContentCellView"]
-                listitems=[listitem for listitem in listitems if listitem.window_text()==friend]
-                if listitems:
-                    return listitems[0],is_contact
-            if  ('服务号' in texts) or ('公众号' in texts):
-                is_contact=False
-                listitems=[listitem for listitem in listitems if listitem.class_name()=="mmui::SearchContentCellView"]
-                listitems=[listitem for listitem in listitems if listitem.window_text()==friend]
-                if listitems:
-                    return listitems[0],is_contact
-            if '功能' in texts:
-                listitems=search_result.children(control_type='ListItem',class_name="mmui::XTableCell")
-                listitems=[listitem for listitem in listitems if listitem.window_text()==friend]
-                if listitems:
-                    return listitems[0],is_contact
-            return None,is_contact
-    
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
         if close_weixin is None:
@@ -1155,9 +1189,12 @@ class Navigator():
         search.set_text(friend)
         try:
             search_results=main_window.child_window(**Lists.SearchResult).wait(wait_for='ready',timeout=3)#搜索结果列表
-            search_result,is_contact=get_search_result(friend=friend,search_result=search_results)
+            Tools.wait_for_search_results_stable(search_results)
+            search_result,section=Tools.get_search_result_info(friend=friend,search_result=search_results)
+            is_contact=section not in {'服务号','公众号'}
         except Exception:
             search_result=None
+            is_contact=True
         if search_result is not None:
             search_result.click_input()
             time.sleep(1)

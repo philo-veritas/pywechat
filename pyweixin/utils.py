@@ -322,7 +322,8 @@ def open_red_packet(dialog_window:WindowSpecification,red_packet:ListItemWrapper
     open_button.click_input()
     red_envelop_detail.close()
 
-def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,is_maximize:bool=None,close_weixin:bool=None)->dict:
+def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,is_maximize:bool=None,close_weixin:bool=None,
+    top_n:int=None)->dict:
     '''
     该函数用来扫描检查一遍会话列表中的所有新消息,返回发送对象以及新消息数量(不包括免打扰)
     Args:
@@ -330,6 +331,7 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
         delay:在会话列表查询新消息时的翻页延迟时间,默认0.3秒
         is_maximize:微信界面是否全屏，默认不全屏
         close_weixin:任务结束后是否关闭微信，默认关闭
+        top_n:只扫描会话列表顶部前n个会话,默认None表示扫描整个列表
     Returns:
         newMessages_dict:有新消息的好友备注及其对应的新消息数量构成的字典
     '''
@@ -343,11 +345,40 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
         newMessageNum=[int(new_message_pattern.search(text).group(1)) for text in newMessageTips]
         return senders,newMessageNum
 
+    def collect_top_sessions(session_list,top_n:int)->list:
+        collected=[]
+        seen=set()
+        session_list.type_keys('{HOME}')
+        time.sleep(delay)
+        last_page_last_text=''
+        while len(collected)<top_n:
+            listItems=session_list.children(control_type='ListItem')
+            if not listItems:
+                break
+            for listItem in listItems:
+                runtime_id=tuple(listItem.element_info.runtime_id)
+                if runtime_id in seen:
+                    continue
+                seen.add(runtime_id)
+                collected.append(listItem)
+                if len(collected)>=top_n:
+                    break
+            current_last_text=listItems[-1].window_text()
+            if len(collected)>=top_n or current_last_text==last_page_last_text:
+                break
+            last_page_last_text=current_last_text
+            session_list.type_keys('{PGDN}')
+            time.sleep(delay)
+        session_list.type_keys('{HOME}')
+        return collected[:top_n]
+
     not_care={'session_item_服务号','session_item_公众号'}
     if is_maximize is None:
         is_maximize=GlobalConfig.is_maximize
     if close_weixin is None:
         close_weixin=GlobalConfig.close_weixin
+    if top_n is not None and (not isinstance(top_n,int) or top_n<=0):
+        raise ValueError('top_n必须是大于0的整数')
     if main_window is None:
         main_window=Navigator.open_weixin(is_maximize=is_maximize)
     newMessageSenders=[]
@@ -366,7 +397,11 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
     if not new_message_num:
         print(f'没有新消息')
         return {}
-    if new_message_num:
+    if top_n is not None:
+        top_listItems=collect_top_sessions(session_list,top_n)
+        senders,nums=traverse_messsage_list(top_listItems)
+        newMessages_dict=dict(zip(senders,nums))
+    elif new_message_num:
         new_message_num=int(new_message_num.group(0))
         session_list=main_window.child_window(**Main_window.SessionList)
         session_list.type_keys('{END}')
