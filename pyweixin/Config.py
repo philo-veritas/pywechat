@@ -49,7 +49,8 @@ class globalConfig:
             cls._instance._window_maximize=False
             cls._instance._send_delay=0.2
             cls._instance._clear=True
-            cls._window_size=(1000,1000)
+            cls._instance._window_size=(1000,1000)
+            cls._instance._window_position_mode='center'
         return cls._instance
     
     @property
@@ -73,6 +74,19 @@ class globalConfig:
         if not isinstance(value,tuple):
             raise TypeError(f"window_size必须是tuple类型,但传入了{type(value)}:{value}")
         self._window_size=value
+
+    @property
+    def window_position_mode(self):
+        '''微信主界面位置模式,支持center和top_left'''
+        return self._window_position_mode
+
+    @window_position_mode.setter
+    def window_position_mode(self,value):
+        if not isinstance(value,str):
+            raise TypeError(f"window_position_mode必须是str类型,但传入了{type(value)}:{value}")
+        if value not in ('center','top_left'):
+            raise ValueError(f"window_position_mode仅支持'center'或'top_left',但传入了{value}")
+        self._window_position_mode=value
 
     @property
     def close_weixin(self):

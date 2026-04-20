@@ -370,11 +370,36 @@ class Tools():
         return scrollable
     
     @staticmethod
+    def get_window_scale_factor(window:WindowSpecification|int)->float:
+        '''
+        获取窗口所在显示器的DPI缩放倍率
+        Args:
+            window:pywinauto窗口对象或窗口句柄
+        Returns:
+            scale_factor:缩放倍率,100%为1.0
+        '''
+        try:
+            hwnd=window if isinstance(window,int) else window.handle
+            get_dpi_for_window=getattr(ctypes.windll.user32,'GetDpiForWindow',None)
+            if hwnd and get_dpi_for_window is not None:
+                dpi=get_dpi_for_window(hwnd)
+                if dpi:
+                    return dpi/96.0
+        except Exception:
+            pass
+        return 1.0
+    
+    @staticmethod
     def is_my_bubble(main_window:WindowSpecification,listitem:ListItemWrapper,)->bool:
         #edit_area:EditWrapper
         '''右键左侧消息区域检测最新的一条消息(bubble)是否是由本人发送'''
         rect=listitem.rectangle()
-        mouse.right_click(coords=(rect.left+100,rect.mid_point().y))
+        scale_factor=Tools.get_window_scale_factor(main_window)
+        base_offset=100#100%缩放下的基准偏移
+        offset=round(base_offset*scale_factor)
+        width=rect.right-rect.left
+        offset=min(offset,max(1,width-1))
+        mouse.right_click(coords=(rect.left+offset,rect.mid_point().y))
         copy_menu_item=main_window.child_window(**MenuItems.CopyMenuItem)        
         if copy_menu_item.exists(timeout=0.1):
             # edit_rect=edit_area.rectangle()
@@ -594,20 +619,21 @@ class Navigator():
         打开微信(微信需要提前登录)
         Args:
             is_maximize:微信界面是否全屏,默认不全屏
-            window_size:微信主界面大小,默认(1000,100),可GlobalConfig.window_size=(width,height)全局控制
+            window_size:微信主界面大小,默认(1000,1000),可GlobalConfig.window_size=(width,height)全局控制
         '''
-        def move_window_to_center(window:WindowSpecification,is_maximize:bool):
-            #将微信主界面移动到窗口正中间,并调整全屏
+        def position_window(window:WindowSpecification,is_maximize:bool):
+            #将微信主界面移动到指定位置,并调整全屏
             window.restore()
             win32gui.SetWindowPos(window.handle,win32con.HWND_TOPMOST, 
             0, 0,window_size[0],window_size[1],win32con.SWP_NOMOVE)
             window_width,window_height=window_size[0],window_size[1]
-            screen_width,screen_height=win32api.GetSystemMetrics(win32con.SM_CXSCREEN),win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-            new_left=(screen_width-window_width)//2
-            new_top=(screen_height-window_height)//2
-            if screen_width!=window_width:
-                #移动窗口到屏幕中央
-                win32gui.MoveWindow(window.handle,new_left,new_top,window_width,window_height,True)
+            if window_position_mode=='top_left':
+                new_left,new_top=0,0
+            else:
+                screen_width,screen_height=win32api.GetSystemMetrics(win32con.SM_CXSCREEN),win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+                new_left=(screen_width-window_width)//2
+                new_top=(screen_height-window_height)//2
+            win32gui.MoveWindow(window.handle,new_left,new_top,window_width,window_height,True)
             ###############################
             if is_maximize:
                 win32gui.SendMessage(window.handle, win32con.WM_SYSCOMMAND, win32con.SC_MAXIMIZE,0)
@@ -618,6 +644,7 @@ class Navigator():
             is_maximize=GlobalConfig.is_maximize
         if window_size is None:
             window_size=GlobalConfig.window_size
+        window_position_mode=GlobalConfig.window_position_mode
         
         is_running=Tools.is_weixin_running()
         if not is_running:#微信不在运行,主界面看不到窗口，需要先启动
@@ -630,7 +657,7 @@ class Navigator():
             raise NotLoginError
         if wx.window_type==1:#微信在运行，主界面存在(可能被关闭或者可见)
             wx_window=desktop.window(handle=handle)
-            main_window=move_window_to_center(wx_window,is_maximize=is_maximize)
+            main_window=position_window(wx_window,is_maximize=is_maximize)
             Tools.cancel_pin(main_window)
         offline_button=main_window.child_window(**Buttons.OffLineButton)
         if offline_button.exists(timeout=0.1):

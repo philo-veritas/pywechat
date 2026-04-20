@@ -3137,7 +3137,8 @@ class Messages():
         return sessions
 
     @staticmethod
-    def pull_messages(friend:str,number:int,chat_only:bool=True,search_pages:int=None,is_maximize:bool=None,close_weixin:bool=None)->list[str]:
+    def pull_messages(friend:str,number:int,chat_only:bool=True,search_pages:int=None,is_maximize:bool=None,close_weixin:bool=None,
+        with_details:bool=False)->list[str]|list[dict]:
         '''
         该函数用来从聊天界面获取聊天消息,也可当做获取聊天记录
         Args:
@@ -3146,9 +3147,48 @@ class Messages():
             search_pages:打开好友聊天窗口时在会话列表中查找好友时滚动列表的次数,默认为5,一次可查询5-12人,为0时,直接从顶部搜索栏搜索好友信息打开聊天界面
             is_maximize:微信界面是否全屏，默认不全屏
             close_weixin:任务结束后是否关闭微信，默认关闭
+            with_details:是否返回带发送方与矩形信息的结构化结果，默认False
         Returns:
             messages:聊天记录中的消息(时间顺序从晚到早)
         '''
+        def rect_tuple(listitem:ListItemWrapper)->tuple[int,int,int,int]|None:
+            try:
+                rect=listitem.rectangle()
+                return rect.left,rect.top,rect.right,rect.bottom
+            except Exception:
+                return None
+
+        def infer_sender(listitem:ListItemWrapper)->str:
+            if listitem.class_name()=='mmui::ChatItemView':
+                return '系统'
+            buttons=listitem.descendants(control_type='Button')
+            if buttons:
+                item_rect=listitem.rectangle()
+                item_mid_x=item_rect.mid_point().x
+                button_midpoints=[]
+                for button in buttons:
+                    try:
+                        button_midpoints.append(button.rectangle().mid_point().x)
+                    except Exception:
+                        continue
+                if button_midpoints:
+                    avatar_mid_x=max(button_midpoints,key=lambda x:abs(x-item_mid_x))
+                    if avatar_mid_x<item_mid_x:
+                        return '对方'
+                    return '我'
+            return '我' if Tools.is_my_bubble(main_window,listitem) else '对方'
+
+        def append_message(listitem:ListItemWrapper,content:str)->None:
+            if with_details:
+                messages.append({
+                    '消息内容':content,
+                    '发送方':infer_sender(listitem),
+                    'item_rect':rect_tuple(listitem),
+                    '控件类型':listitem.class_name(),
+                })
+            else:
+                messages.append(content)
+
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
         if close_weixin is None:
@@ -3171,12 +3211,12 @@ class Messages():
                 selected=[listitem for listitem in chat_list.children(control_type='ListItem') if listitem.has_keyboard_focus()]
                 if selected:
                     if selected[0].class_name()=='mmui::ChatItemView' and not chat_only:
-                        messages.append(selected[0].window_text())
+                        append_message(selected[0],selected[0].window_text())
                     if selected[0].class_name()=='mmui::ChatVoiceItemView':
                         content=audio_pattern.search(selected[0].window_text()).group(1)
-                        messages.append(f'语音转文字:{content}')
+                        append_message(selected[0],f'语音转文字:{content}')
                     if selected[0].class_name()!='mmui::ChatItemView':
-                        messages.append(selected[0].window_text())
+                        append_message(selected[0],selected[0].window_text())
                 if not selected:
                     break
                 chat_list.type_keys('{UP}') 
