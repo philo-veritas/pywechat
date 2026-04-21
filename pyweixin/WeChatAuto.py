@@ -1119,17 +1119,38 @@ class FriendSettings():
     '''关于好友设置的一些方法'''
     
     @staticmethod
-    def add_new_friend(number:str,greetings:str=None,remark:str=None,chat_only:bool=False,is_maximize:bool=None,close_weixin:bool=None):
+    def add_new_friend(number:str,greetings:str=None,remark:str=None,chat_only:bool=False,
+        is_maximize:bool=None,close_weixin:bool=None,*,remark_prefix:str=None,remark_suffix:str=None):
         '''
         该方法用来添加新朋友,不建议频繁使用,会封号!
         Args:
             number:微信号或手机号
             greetings:添加好友时的招呼用语
-            remark:给对方的备注
+            remark:给对方的本地备注,优先级高于自动备注
             chat_only:朋友权限仅聊天
             is_maximize:微信界面是否全屏，默认不全屏
             close_weixin:任务结束后是否关闭微信，默认关闭
+            remark_prefix:关键字参数,自动备注前缀,最终格式为前缀+昵称+后缀
+            remark_suffix:关键字参数,自动备注后缀,最终格式为前缀+昵称+后缀
         '''
+        def resolve_remark(contact_profile_view):
+            if remark is not None:
+                return remark
+            if remark_prefix is None and remark_suffix is None:
+                return None
+            texts=[text.window_text().strip() for text in contact_profile_view.descendants(control_type='Text')]
+            texts=[text for text in texts if text]
+            if not texts:
+                return None
+            nickname=texts[0]
+            if '昵称：' in texts and texts.index('昵称：')<len(texts)-1:
+                nickname=texts[texts.index('昵称：')+1]
+            if not nickname:
+                return None
+            prefix='' if remark_prefix is None else remark_prefix
+            suffix='' if remark_suffix is None else remark_suffix
+            return f'{prefix}{nickname}{suffix}'
+
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
         if close_weixin is None:
@@ -1142,6 +1163,7 @@ class FriendSettings():
         time.sleep(1)
         contact_profile_view=add_friend_pane.child_window(**Groups.ContactProfileViewGroup)
         if contact_profile_view.exists(timeout=0.1):
+            resolved_remark=resolve_remark(contact_profile_view)
             add_to_contact=contact_profile_view.child_window(**Buttons.AddToContactsButton)
             if add_to_contact.exists(timeout=0.1):
                 add_to_contact.click_input()
@@ -1152,8 +1174,8 @@ class FriendSettings():
                 confirm_button=verify_friend_window.child_window(**Buttons.ConfirmButton)
                 if greetings is not None:
                     request_content_edit.set_text(greetings)
-                if remark is not None:
-                    remark_edit.set_text(remark)
+                if resolved_remark is not None:
+                    remark_edit.set_text(resolved_remark)
                 if chat_only:
                     chat_only_group.click_input()
                 confirm_button.click_input()
