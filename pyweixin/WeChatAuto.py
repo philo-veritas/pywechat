@@ -1150,18 +1150,71 @@ class Contacts():
             match_matched=True if target_matches is None else any(match in request_detail['content'] for match in target_matches)
             return index_matched and match_matched
 
+        def locate_verification_remark_edit(verify_friend_window):
+            remark_edit=verify_friend_window.child_window(**Edits.ChangeRemarkEdit)
+            if remark_edit.exists(timeout=0.1):
+                return remark_edit
+            edit_controls=verify_friend_window.descendants(control_type='Edit')
+            for edit_control in edit_controls:
+                names=[]
+                try:
+                    names.append(edit_control.element_info.name)
+                except Exception:
+                    pass
+                try:
+                    names.append(edit_control.window_text())
+                except Exception:
+                    pass
+                try:
+                    names.extend(edit_control.texts())
+                except Exception:
+                    pass
+                if any(isinstance(name,str) and name.strip()=='修改备注' for name in names):
+                    return edit_control
+            if len(edit_controls)>=2:
+                return edit_controls[1]
+            return None
+
+        def build_verification_remark(remark_edit):
+            if remark_prefix is None and remark_suffix is None:
+                return None
+            if remark_edit is None:
+                return None
+            values=[]
+            try:
+                values.append(remark_edit.get_value())
+            except Exception:
+                pass
+            try:
+                values.append(remark_edit.window_text())
+            except Exception:
+                pass
+            try:
+                values.extend(remark_edit.texts())
+            except Exception:
+                pass
+            for value in values:
+                if not isinstance(value,str):
+                    continue
+                value=value.strip()
+                if value:
+                    prefix='' if remark_prefix is None else remark_prefix
+                    suffix='' if remark_suffix is None else remark_suffix
+                    return f'{prefix}{value}{suffix}'
+            return None
+
         def friend_verification(current_item):
             time.sleep(1)
             if verify and verify_button.exists(timeout=0.1):
-                resolved_remark=_build_prefixed_remark(contact_profile,remark_prefix=remark_prefix,remark_suffix=remark_suffix)
                 verify_button.click_input()
                 if not verifyFriend_window.exists(timeout=1):
                     current_item.click_input()
                     return False
                 verify_friend_window=Tools.move_window_to_center(Window=Windows.VerifyFriendWindow2)
+                remark_edit=locate_verification_remark_edit(verify_friend_window)
+                resolved_remark=build_verification_remark(remark_edit)
                 if resolved_remark is not None:
-                    remark_edit=verify_friend_window.child_window(**Edits.ChangeRemarkEdit)
-                    if remark_edit.exists(timeout=0.1):
+                    if remark_edit is not None:
                         remark_edit.set_text(resolved_remark)
                 confirm_button=verify_friend_window.child_window(**Buttons.ConfirmButton)
                 if not confirm_button.exists(timeout=0.1):
@@ -1179,7 +1232,6 @@ class Contacts():
         #右侧的自定义面板
         chat_button=main_window.child_window(**SideBar.Weixin)
         contact_custom=main_window.child_window(**Customs.ContactDetailCustom)
-        contact_profile=contact_custom.child_window(**Groups.ContactProfileGroup)
         verify_button=contact_custom.child_window(control_type='Button',title='前往验证')
         Tools.collapse_contacts(main_window,contact_list)
         #验证好友窗口
