@@ -1106,7 +1106,7 @@ class Contacts():
                         clear_item(selected[0])
                         contact_list.children(control_type='ListItem')[2].click_input()
                     else:
-                        pyautogui.keyDown('down',_pause=False)
+                        contact_list.type_keys('{DOWN}')
                     selected=[listitem for listitem in contact_list.children(control_type='ListItem') if listitem.is_selected()]
             if clear:clear_item(selected[0])
             contact_list.type_keys('{HOME}')
