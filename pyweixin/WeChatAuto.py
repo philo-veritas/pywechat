@@ -102,6 +102,42 @@ pyautogui.FAILSAFE=False#防止鼠标在屏幕边缘处造成的误触
 Regex_Patterns=Regex_Patterns()#所有的正则pattern
 
 
+def _build_prefixed_remark(profile_group, remark_prefix:str=None, remark_suffix:str=None)->str|None:
+    '''从资料面板中提取昵称并按前后缀生成备注'''
+    if remark_prefix is None and remark_suffix is None:
+        return None
+    if not profile_group.exists(timeout=0.1):
+        return None
+    texts=[text.window_text().strip() for text in profile_group.descendants(control_type='Text')]
+    texts=[text for text in texts if text]
+    if not texts:
+        return None
+    nickname=texts[0]
+    if '昵称：' in texts and texts.index('昵称：')<len(texts)-1:
+        nickname=texts[texts.index('昵称：')+1]
+    if not nickname:
+        return None
+    prefix='' if remark_prefix is None else remark_prefix
+    suffix='' if remark_suffix is None else remark_suffix
+    return f'{prefix}{nickname}{suffix}'
+
+
+def _parse_new_friend_request(raw_text:str)->dict[str,str]:
+    '''解析新的朋友列表项中的状态与内容'''
+    status=''
+    content=raw_text
+    for candidate in ('等待验证','已添加','已过期'):
+        if raw_text.endswith(candidate):
+            status=candidate
+            content=raw_text[:-len(candidate)]
+            break
+    return {
+        'raw_text':raw_text,
+        'content':content.strip(),
+        'status':status or '未知',
+    }
+
+
 class AutoReply():
     
     @staticmethod
@@ -1041,13 +1077,17 @@ class Contacts():
             return recent_groups
     
     @staticmethod
-    def check_new_friends(verify:bool=False,limit:int=8,clear:bool=False,is_maximize:bool=None,close_weixin:bool=None)->list[str]:
+    def check_new_friends(verify:bool=False,limit:int=8,clear:bool=False,is_maximize:bool=None,close_weixin:bool=None,*,remark_prefix:str=None,remark_suffix:str=None,target_indexes:list[int]=None,target_matches:list[str]=None)->list[str]:
         '''
         该方法用来检查一遍通讯录中新的朋友的信息,可以通过验证被动添加好友
         Args:
             verify:是否通过好友验证同意添加好友
             limit:通过验证的上限数:单次≤8人,每日≤4次,间隔≥2小时,无论新老号超过这个频率大概率封号
             clear:是否删除单条验证消息,遍历结束后会全部删除
+            remark_prefix:关键字参数,通过验证时自动备注前缀,仅在verify=True时生效
+            remark_suffix:关键字参数,通过验证时自动备注后缀,仅在verify=True时生效
+            target_indexes:关键字参数,仅处理指定序号(1-based)的好友请求
+            target_matches:关键字参数,仅处理内容包含任一关键字的好友请求
             is_maximize:微信界面是否全屏，默认不全屏
             close_weixin:任务结束后是否关闭微信，默认关闭
         Returns:
@@ -1057,17 +1097,76 @@ class Contacts():
             is_maximize=GlobalConfig.is_maximize
         if close_weixin is None:
             close_weixin=GlobalConfig.close_weixin
-        
+        if target_indexes is not None:
+            if not isinstance(target_indexes,list):
+                raise ValueError('target_indexes必须是int构成的列表!')
+            invalid_indexes=[index for index in target_indexes if not isinstance(index,int) or index<1]
+            if invalid_indexes:
+                raise ValueError('target_indexes内的序号必须都是大于0的整数!')
+            target_indexes=set(target_indexes)
+        if target_matches is not None:
+            if not isinstance(target_matches,list):
+                raise ValueError('target_matches必须是字符串构成的列表!')
+            cleaned_matches=[]
+            for match in target_matches:
+                if not isinstance(match,str):
+                    raise ValueError('target_matches内的元素必须都是字符串!')
+                match=match.strip()
+                if not match:
+                    raise ValueError('target_matches内的字符串不能为空!')
+                cleaned_matches.append(match)
+            target_matches=list(dict.fromkeys(cleaned_matches))
+
         def clear_item(current_item):
             current_item.right_click_input()
             pyautogui.press('down')
             pyautogui.press('enter')
-        
+
+        def snapshot_requests()->list[dict]:
+            snapshot=[]
+            listitems=[listitem for listitem in contact_list.children() if listitem.class_name()=='mmui::XTableCell']
+            for index,listitem in enumerate(listitems,1):
+                request_detail=_parse_new_friend_request(listitem.window_text())
+                snapshot.append({
+                    'snapshot_index':index,
+                    'runtime_id':listitem.element_info.runtime_id,
+                    'raw_text':request_detail['raw_text'],
+                    'content':request_detail['content'],
+                    'status':request_detail['status'],
+                    'should_handle':is_target_request(index,request_detail),
+                })
+            return snapshot
+
+        def find_request_item(runtime_id):
+            for listitem in contact_list.children():
+                if listitem.class_name()!='mmui::XTableCell':
+                    continue
+                if listitem.element_info.runtime_id==runtime_id:
+                    return listitem
+            return None
+
+        def is_target_request(current_index:int,request_detail:dict[str,str])->bool:
+            index_matched=True if target_indexes is None else current_index in target_indexes
+            match_matched=True if target_matches is None else any(match in request_detail['content'] for match in target_matches)
+            return index_matched and match_matched
+
         def friend_verification(current_item):
             time.sleep(1)
             if verify and verify_button.exists(timeout=0.1):
+                resolved_remark=_build_prefixed_remark(contact_profile,remark_prefix=remark_prefix,remark_suffix=remark_suffix)
                 verify_button.click_input()
-                confirm_button=verifyFriend_window.child_window(**Buttons.ConfirmButton)
+                if not verifyFriend_window.exists(timeout=1):
+                    current_item.click_input()
+                    return False
+                verify_friend_window=Tools.move_window_to_center(Window=Windows.VerifyFriendWindow2)
+                if resolved_remark is not None:
+                    remark_edit=verify_friend_window.child_window(**Edits.ChangeRemarkEdit)
+                    if remark_edit.exists(timeout=0.1):
+                        remark_edit.set_text(resolved_remark)
+                confirm_button=verify_friend_window.child_window(**Buttons.ConfirmButton)
+                if not confirm_button.exists(timeout=0.1):
+                    current_item.click_input()
+                    return False
                 confirm_button.click_input()
                 current_item.click_input()
                 return True
@@ -1080,6 +1179,7 @@ class Contacts():
         #右侧的自定义面板
         chat_button=main_window.child_window(**SideBar.Weixin)
         contact_custom=main_window.child_window(**Customs.ContactDetailCustom)
+        contact_profile=contact_custom.child_window(**Groups.ContactProfileGroup)
         verify_button=contact_custom.child_window(control_type='Button',title='前往验证')
         Tools.collapse_contacts(main_window,contact_list)
         #验证好友窗口
@@ -1091,24 +1191,20 @@ class Contacts():
         if newfriend_item.exists(timeout=0.1):
             newfriend_item.click_input()
             contact_list.type_keys('{END}')
-            newfriends=[listitem for listitem in contact_list.children() if listitem.class_name()=='mmui::XTableCell']
-            if newfriends:
-                last=newfriends[-1].window_text()
-                contact_list.type_keys('{HOME}')
-                contact_list.type_keys('{DOWN}'*2)
-                selected=[listitem for listitem in contact_list.children(control_type='ListItem') if listitem.is_selected()]
-                while selected[0].window_text()!=last:
-                    newfriends_detail.append(selected[0].window_text())
-                    if verified_num<limit:
-                        is_verified=friend_verification(selected[0])
-                        if is_verified:verified_num+=1
-                    if clear:
-                        clear_item(selected[0])
-                        contact_list.children(control_type='ListItem')[2].click_input()
-                    else:
-                        contact_list.type_keys('{DOWN}')
-                    selected=[listitem for listitem in contact_list.children(control_type='ListItem') if listitem.is_selected()]
-            if clear:clear_item(selected[0])
+            request_snapshot=snapshot_requests()
+            newfriends_detail=[request['raw_text'] for request in request_snapshot]
+            for request in request_snapshot:
+                if not request['should_handle']:
+                    continue
+                current_item=find_request_item(request['runtime_id'])
+                if current_item is None:
+                    continue
+                current_item.click_input()
+                if verified_num<limit:
+                    is_verified=friend_verification(current_item)
+                    if is_verified:verified_num+=1
+                if clear:
+                    clear_item(current_item)
             contact_list.type_keys('{HOME}')
             Tools.collapse_contacts(main_window,contact_list)
         chat_button.click_input()
@@ -1133,24 +1229,6 @@ class FriendSettings():
             remark_prefix:关键字参数,自动备注前缀,最终格式为前缀+昵称+后缀
             remark_suffix:关键字参数,自动备注后缀,最终格式为前缀+昵称+后缀
         '''
-        def resolve_remark(contact_profile_view):
-            if remark is not None:
-                return remark
-            if remark_prefix is None and remark_suffix is None:
-                return None
-            texts=[text.window_text().strip() for text in contact_profile_view.descendants(control_type='Text')]
-            texts=[text for text in texts if text]
-            if not texts:
-                return None
-            nickname=texts[0]
-            if '昵称：' in texts and texts.index('昵称：')<len(texts)-1:
-                nickname=texts[texts.index('昵称：')+1]
-            if not nickname:
-                return None
-            prefix='' if remark_prefix is None else remark_prefix
-            suffix='' if remark_suffix is None else remark_suffix
-            return f'{prefix}{nickname}{suffix}'
-
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
         if close_weixin is None:
@@ -1163,7 +1241,11 @@ class FriendSettings():
         time.sleep(1)
         contact_profile_view=add_friend_pane.child_window(**Groups.ContactProfileViewGroup)
         if contact_profile_view.exists(timeout=0.1):
-            resolved_remark=resolve_remark(contact_profile_view)
+            resolved_remark=remark if remark is not None else _build_prefixed_remark(
+                contact_profile_view,
+                remark_prefix=remark_prefix,
+                remark_suffix=remark_suffix,
+            )
             add_to_contact=contact_profile_view.child_window(**Buttons.AddToContactsButton)
             if add_to_contact.exists(timeout=0.1):
                 add_to_contact.click_input()
