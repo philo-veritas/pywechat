@@ -20,6 +20,12 @@ def main() -> None:
         default=0.3,
         help="扫描会话列表翻页延迟，默认 0.3 秒",
     )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=20,
+        help="只扫描会话列表顶部前 N 个会话，默认 20",
+    )
     args = parser.parse_args()
 
     GlobalConfig.is_maximize = False
@@ -32,7 +38,7 @@ def main() -> None:
             delay=args.delay,
             is_maximize=False,
             close_weixin=False,
-            top_n=20,
+            top_n=args.top_n,
         )
 
     print(new_message_dict)

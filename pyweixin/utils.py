@@ -335,14 +335,35 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
     Returns:
         newMessages_dict:有新消息的好友备注及其对应的新消息数量构成的字典
     '''
-    def traverse_messsage_list(listItems):
-        #newMessageTips为newMessagefriends中每个元素的文本:['测试365 5条新消息','一家人已置顶20条新消息']这样的字符串列表
-        listItems=[listItem for listItem in listItems if listItem.automation_id() not in not_care 
-        and '消息免打扰' not in listItem.window_text()]
-        listItems=[listItem for listItem in listItems if new_message_pattern.search(listItem.window_text())]
-        senders=[listItem.automation_id().replace('session_item_','') for listItem in listItems]
-        newMessageTips=[listItem.window_text() for listItem in listItems if listItem.window_text() not in newMessageSenders]
-        newMessageNum=[int(new_message_pattern.search(text).group(1)) for text in newMessageTips]
+    def get_session_snapshot(listItem):
+        return listItem.automation_id(),listItem.window_text()
+
+    def get_session_key(session_snapshot:tuple[str,str])->str:
+        automation_id,text=session_snapshot
+        return automation_id or text
+
+    def get_sender_name(automation_id:str,text:str)->str:
+        if automation_id:
+            return automation_id.replace('session_item_','',1)
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()
+        return ''
+
+    def traverse_messsage_list(session_snapshots):
+        senders=[]
+        newMessageNum=[]
+        for automation_id,text in session_snapshots:
+            if automation_id in not_care or '消息免打扰' in text:
+                continue
+            match=new_message_pattern.search(text)
+            if not match:
+                continue
+            sender=get_sender_name(automation_id,text)
+            if not sender:
+                continue
+            senders.append(sender)
+            newMessageNum.append(int(match.group(1)))
         return senders,newMessageNum
 
     def collect_top_sessions(session_list,top_n:int)->list:
@@ -355,15 +376,16 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
             listItems=session_list.children(control_type='ListItem')
             if not listItems:
                 break
-            for listItem in listItems:
-                runtime_id=tuple(listItem.element_info.runtime_id)
-                if runtime_id in seen:
+            session_snapshots=[get_session_snapshot(listItem) for listItem in listItems]
+            for session_snapshot in session_snapshots:
+                session_key=get_session_key(session_snapshot)
+                if not session_key or session_key in seen:
                     continue
-                seen.add(runtime_id)
-                collected.append(listItem)
+                seen.add(session_key)
+                collected.append(session_snapshot)
                 if len(collected)>=top_n:
                     break
-            current_last_text=listItems[-1].window_text()
+            current_last_text=session_snapshots[-1][1]
             if len(collected)>=top_n or current_last_text==last_page_last_text:
                 break
             last_page_last_text=current_last_text
@@ -398,8 +420,8 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
         print(f'没有新消息')
         return {}
     if top_n is not None:
-        top_listItems=collect_top_sessions(session_list,top_n)
-        senders,nums=traverse_messsage_list(top_listItems)
+        top_sessions=collect_top_sessions(session_list,top_n)
+        senders,nums=traverse_messsage_list(top_sessions)
         newMessages_dict=dict(zip(senders,nums))
     elif new_message_num:
         new_message_num=int(new_message_num.group(0))
@@ -413,13 +435,16 @@ def scan_for_new_messages(main_window:WindowSpecification=None,delay:float=0.3,i
             #遍历获取带有新消息的ListItem
             listItems=session_list.children(control_type='ListItem')
             time.sleep(delay)
-            senders,nums=traverse_messsage_list(listItems)
+            if not listItems:
+                break
+            session_snapshots=[get_session_snapshot(listItem) for listItem in listItems]
+            senders,nums=traverse_messsage_list(session_snapshots)
             ##提取姓名和数量
             newMessageNums.extend(nums)
             newMessageSenders.extend(senders)
             newMessages_dict=dict(zip(newMessageSenders,newMessageNums))
             session_list.type_keys('{PGDN}')
-            if listItems[-1].window_text()==last_item:
+            if session_snapshots[-1][1]==last_item:
                 break
         session_list.type_keys('{HOME}')
     if close_weixin:
