@@ -5,28 +5,11 @@ import argparse
 from pyweixin import Contacts, GlobalConfig
 
 WINDOW_SIZE = (1500, 1500)
-STATUS_SUFFIXES = ("等待验证", "已添加", "已过期")
-
-
-def parse_request(raw_text: str) -> dict[str, str]:
-    status = ""
-    content = raw_text
-    for candidate in STATUS_SUFFIXES:
-        if raw_text.endswith(candidate):
-            status = candidate
-            content = raw_text[: -len(candidate)]
-            break
-
-    return {
-        "raw_text": raw_text,
-        "content": content.strip(),
-        "status": status or "未知",
-    }
 
 
 def should_select_request(
     index: int,
-    parsed_request: dict[str, str],
+    request_result: dict,
     indexes: list[int] | None,
     matches: list[str] | None,
 ) -> bool:
@@ -34,7 +17,7 @@ def should_select_request(
     match_matched = (
         True
         if matches is None
-        else any(match in parsed_request["content"] for match in matches)
+        else any(match in request_result["content"] for match in matches)
     )
     return index_matched and match_matched
 
@@ -108,7 +91,7 @@ def main() -> None:
     GlobalConfig.window_position_mode = "top_left"
 
     verify_limit = 8 if args.limit is None else args.limit
-    requests = Contacts.check_new_friends(
+    request_results = Contacts.check_new_friends(
         verify=args.verify,
         limit=verify_limit,
         remark_prefix=args.remark_prefix,
@@ -126,11 +109,10 @@ def main() -> None:
         print(f"matches: {matches}")
         print(f"remark_prefix: {args.remark_prefix!r}")
         print(f"remark_suffix: {args.remark_suffix!r}")
-    parsed_requests = [parse_request(request) for request in requests]
     matched_requests = [
-        parsed_request
-        for index, parsed_request in enumerate(parsed_requests, 1)
-        if should_select_request(index, parsed_request, indexes, matches)
+        request_result
+        for index, request_result in enumerate(request_results, 1)
+        if should_select_request(index, request_result, indexes, matches)
     ]
     if args.verify:
         matched_waiting = [
@@ -140,12 +122,19 @@ def main() -> None:
         print(f"estimated_verifications: {min(len(matched_waiting), verify_limit)}")
         if not matched_requests:
             print("未找到匹配目标，未执行通过验证。")
-    print(f"好友请求数: {len(requests)}")
-    for index, parsed in enumerate(parsed_requests, 1):
-        print(
-            f"[{index}]: status={parsed['status']} "
-            f"content={parsed['content']}"
+    print(f"好友请求数: {len(request_results)}")
+    for request_result in request_results:
+        message = (
+            f"[{request_result['index']}]: status={request_result['status']} "
+            f"content={request_result['content']}"
         )
+        if args.verify and request_result["matched"]:
+            message += (
+                f" verified={request_result['verified']} "
+                f"cleared={request_result['cleared']} "
+                f"final_name={request_result['final_name']!r}"
+            )
+        print(message)
 
 
 if __name__ == "__main__":

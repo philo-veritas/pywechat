@@ -1077,7 +1077,7 @@ class Contacts():
             return recent_groups
     
     @staticmethod
-    def check_new_friends(verify:bool=False,limit:int=8,clear:bool=False,is_maximize:bool=None,close_weixin:bool=None,*,remark_prefix:str=None,remark_suffix:str=None,target_indexes:list[int]=None,target_matches:list[str]=None)->list[str]:
+    def check_new_friends(verify:bool=False,limit:int=8,clear:bool=False,is_maximize:bool=None,close_weixin:bool=None,*,remark_prefix:str=None,remark_suffix:str=None,target_indexes:list[int]=None,target_matches:list[str]=None)->list[dict]:
         '''
         该方法用来检查一遍通讯录中新的朋友的信息,可以通过验证被动添加好友
         Args:
@@ -1091,7 +1091,8 @@ class Contacts():
             is_maximize:微信界面是否全屏，默认不全屏
             close_weixin:任务结束后是否关闭微信，默认关闭
         Returns:
-            newfriends_detail:所有新朋友的信息
+            newfriends_detail:所有新朋友的信息与处理结果,每项格式为
+            {'index':x,'raw_text':x,'content':x,'status':x,'matched':x,'verified':x,'cleared':x,'final_name':x}
         '''
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
@@ -1128,12 +1129,15 @@ class Contacts():
             for index,listitem in enumerate(listitems,1):
                 request_detail=_parse_new_friend_request(listitem.window_text())
                 snapshot.append({
-                    'snapshot_index':index,
+                    'index':index,
                     'runtime_id':listitem.element_info.runtime_id,
                     'raw_text':request_detail['raw_text'],
                     'content':request_detail['content'],
                     'status':request_detail['status'],
-                    'should_handle':is_target_request(index,request_detail),
+                    'matched':is_target_request(index,request_detail),
+                    'verified':False,
+                    'cleared':False,
+                    'final_name':None,
                 })
             return snapshot
 
@@ -1175,9 +1179,7 @@ class Contacts():
                 return edit_controls[1]
             return None
 
-        def build_verification_remark(remark_edit):
-            if remark_prefix is None and remark_suffix is None:
-                return None
+        def read_verification_remark_value(remark_edit):
             if remark_edit is None:
                 return None
             values=[]
@@ -1198,32 +1200,35 @@ class Contacts():
                     continue
                 value=value.strip()
                 if value:
-                    prefix='' if remark_prefix is None else remark_prefix
-                    suffix='' if remark_suffix is None else remark_suffix
-                    return f'{prefix}{value}{suffix}'
+                    return value
             return None
 
-        def friend_verification(current_item):
+        def friend_verification(current_item)->dict[str,bool|str|None]:
             time.sleep(1)
             if verify and verify_button.exists(timeout=0.1):
                 verify_button.click_input()
                 if not verifyFriend_window.exists(timeout=1):
                     current_item.click_input()
-                    return False
+                    return {'verified':False,'final_name':None}
                 verify_friend_window=Tools.move_window_to_center(Window=Windows.VerifyFriendWindow2)
                 remark_edit=locate_verification_remark_edit(verify_friend_window)
-                resolved_remark=build_verification_remark(remark_edit)
+                original_remark=read_verification_remark_value(remark_edit)
+                resolved_remark=original_remark
+                if original_remark is not None and (remark_prefix is not None or remark_suffix is not None):
+                    prefix='' if remark_prefix is None else remark_prefix
+                    suffix='' if remark_suffix is None else remark_suffix
+                    resolved_remark=f'{prefix}{original_remark}{suffix}'
                 if resolved_remark is not None:
                     if remark_edit is not None:
                         remark_edit.set_text(resolved_remark)
                 confirm_button=verify_friend_window.child_window(**Buttons.ConfirmButton)
                 if not confirm_button.exists(timeout=0.1):
                     current_item.click_input()
-                    return False
+                    return {'verified':False,'final_name':None}
                 confirm_button.click_input()
                 current_item.click_input()
-                return True
-            return False
+                return {'verified':True,'final_name':resolved_remark}
+            return {'verified':False,'final_name':None}
 
         verified_num=0
         newfriends_detail=[]
@@ -1244,19 +1249,22 @@ class Contacts():
             newfriend_item.click_input()
             contact_list.type_keys('{END}')
             request_snapshot=snapshot_requests()
-            newfriends_detail=[request['raw_text'] for request in request_snapshot]
+            newfriends_detail=request_snapshot
             for request in request_snapshot:
-                if not request['should_handle']:
+                if not request['matched']:
                     continue
                 current_item=find_request_item(request['runtime_id'])
                 if current_item is None:
                     continue
                 current_item.click_input()
                 if verified_num<limit:
-                    is_verified=friend_verification(current_item)
-                    if is_verified:verified_num+=1
+                    verification_result=friend_verification(current_item)
+                    request['verified']=verification_result['verified']
+                    request['final_name']=verification_result['final_name']
+                    if verification_result['verified']:verified_num+=1
                 if clear:
                     clear_item(current_item)
+                    request['cleared']=True
             contact_list.type_keys('{HOME}')
             Tools.collapse_contacts(main_window,contact_list)
         chat_button.click_input()
