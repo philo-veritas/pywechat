@@ -2404,17 +2404,22 @@ class Moments():
                 pyautogui.press('down',presses=fallback_down)
             pyautogui.press('enter')
 
-        def locate_native_choose_file_window():
-            candidates=[
-                desktop.window(title_re='^(打开|Open|选择.*|请选择.*)$',control_type='Window',top_level_only=True),
-                desktop.window(class_name='#32770',control_type='Window',top_level_only=True),
-            ]
-            for native_window in candidates:
-                if native_window.exists(timeout=2):
-                    edit=native_window.child_window(**Edits.NativeFileSaveEdit)
-                    if edit.exists(timeout=1):
-                        return native_window
-            raise RuntimeError('未找到Windows文件选择窗口,请确认已弹出"选照片或视频"文件选择器')
+        def fill_native_choose_file_window(paths):
+            time.sleep(1)
+            try:
+                native_window=desktop.active()
+                edit=native_window.child_window(**Edits.NativeFileSaveEdit)
+                if edit.exists(timeout=0.5):
+                    edit.set_text(paths)
+                    pyautogui.hotkey('alt','o')
+                    return
+            except Exception:
+                pass
+            SystemSettings.copy_text_to_clipboard(paths.strip())
+            pyautogui.hotkey('alt','n')
+            pyautogui.hotkey('ctrl','a')
+            pyautogui.hotkey('ctrl','v')
+            pyautogui.hotkey('alt','o')
         
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
@@ -2429,10 +2434,7 @@ class Moments():
         post_button=moments.child_window(**Buttons.PostButton)
         if medias:
             choose_post_menu_item('选照片或视频')
-            native_window=locate_native_choose_file_window()
-            edit=native_window.child_window(**Edits.NativeFileSaveEdit)
-            edit.set_text(paths)
-            pyautogui.hotkey('alt','o')
+            fill_native_choose_file_window(paths)
         if texts and not medias:
             choose_post_menu_item('发表文字',fallback_down=1)
         publish_panel=moments.child_window(**Groups.SnsPublishGroup)
@@ -2442,6 +2444,8 @@ class Moments():
             text_input.set_text(texts)
         post_button=publish_panel.child_window(**Buttons.PostButton)
         post_button.click_input()
+        time.sleep(1)
+        moments.close()
 
     @staticmethod
     def dump_recent_posts(recent:Literal['Today','Yesterday','Week','Month']='Today',number:int=None,is_maximize:bool=None,close_weixin:bool=None)->list[dict]:
