@@ -142,8 +142,6 @@ def main() -> None:
             parser.error(str(exc))
 
         media_paths = local_media_paths + downloaded_paths
-        if not media_paths:
-            parser.error("当前 pyweixin.Moments.post_moments 实现不支持纯文字朋友圈，请提供 --media 或 --image-url")
 
         print_summary(
             dry_run=not args.yes,

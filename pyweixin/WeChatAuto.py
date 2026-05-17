@@ -2392,6 +2392,29 @@ class Moments():
                 if os.path.exists(media):
                     path+=f'"{media}" '
             return path
+
+        def choose_post_menu_item(title:str, fallback_down:int=0):
+            post_button.right_click_input()
+            for root in (moments, desktop):
+                menu_item=root.child_window(title=title,control_type='MenuItem')
+                if menu_item.exists(timeout=0.5):
+                    menu_item.click_input()
+                    return
+            if fallback_down:
+                pyautogui.press('down',presses=fallback_down)
+            pyautogui.press('enter')
+
+        def locate_native_choose_file_window():
+            candidates=[
+                desktop.window(title_re='^(打开|Open|选择.*|请选择.*)$',control_type='Window',top_level_only=True),
+                desktop.window(class_name='#32770',control_type='Window',top_level_only=True),
+            ]
+            for native_window in candidates:
+                if native_window.exists(timeout=2):
+                    edit=native_window.child_window(**Edits.NativeFileSaveEdit)
+                    if edit.exists(timeout=1):
+                        return native_window
+            raise RuntimeError('未找到Windows文件选择窗口,请确认已弹出"选照片或视频"文件选择器')
         
         if is_maximize is None:
             is_maximize=GlobalConfig.is_maximize
@@ -2400,21 +2423,18 @@ class Moments():
         if not texts and not medias:
             raise ValueError(f'文本与图片视频至少要有一个!')
         paths=build_path(medias)
-        if not paths:
+        if medias and not paths:
             raise ValueError(f'medias列表内无可用图片或视频路径!')
         moments=Navigator.open_moments(is_maximize=is_maximize,close_weixin=close_weixin)
         post_button=moments.child_window(**Buttons.PostButton)
-        post_button.right_click_input(),
-        pyautogui.press('up',presses=2)
         if medias:
-            pyautogui.press('enter')
-            native_window=desktop.window(**Windows.NativeChooseFileWindow)
+            choose_post_menu_item('选照片或视频')
+            native_window=locate_native_choose_file_window()
             edit=native_window.child_window(**Edits.NativeFileSaveEdit)
             edit.set_text(paths)
             pyautogui.hotkey('alt','o')
         if texts and not medias:
-            pyautogui.press('down',presses=1)
-            pyautogui.press('enter')
+            choose_post_menu_item('发表文字',fallback_down=1)
         publish_panel=moments.child_window(**Groups.SnsPublishGroup)
         if texts:
             text_input=publish_panel.child_window(**Edits.SnsEdit)
